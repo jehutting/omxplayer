@@ -17,6 +17,9 @@
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+//JEHUTTING 
+//#define KEYBOARD_TEST
+
 #include <stdio.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -57,7 +60,7 @@ extern "C" {
 #include "OMXControl.h"
 #include "DllOMX.h"
 #include "Srt.h"
-#include "KeyConfig.h"
+//JEHUTTING #include "KeyConfig.h"
 #include "utils/Strprintf.h"
 #include "Keyboard.h"
 
@@ -129,6 +132,7 @@ void sig_handler(int s)
   if (s==SIGINT && !g_abort)
   {
      signal(SIGINT, SIG_DFL);
+     /* JEHUTTING */ printf("omxplayer aborting through g_abort...\n");
      g_abort = true;
      return;
   }
@@ -136,6 +140,7 @@ void sig_handler(int s)
   signal(SIGSEGV, SIG_DFL);
   signal(SIGFPE, SIG_DFL);
   m_keyboard.Close();
+  /* JEHUTTING */ printf("omxplayer aborting...\n");
   abort();
 }
 
@@ -189,6 +194,8 @@ void print_usage()
   printf("              --key-config <file>       Uses key bindings specified in <file> instead of the default\n");
 }
 
+// JEHUTTING TODO Key bindings depend on the key mapping
+//                The user can use the --key-config option.
 void print_keybindings()
 {
   printf("Key bindings :\n");
@@ -520,6 +527,8 @@ static void blank_background(bool enable)
 
 int main(int argc, char *argv[])
 {
+  printf("omxplayer main\n");
+
   signal(SIGSEGV, sig_handler);
   signal(SIGABRT, sig_handler);
   signal(SIGFPE, sig_handler);
@@ -629,8 +638,9 @@ int main(int argc, char *argv[])
   int c;
   std::string mode;
 
+  /* JEHUTTING Hide within Keyboard */
   //Build default keymap just in case the --key-config option isn't used
-  map<int,int> keymap = KeyConfig::buildDefaultKeymap();
+  //map<int,int> keymap = KeyConfig::buildDefaultKeymap();
 
   while ((c = getopt_long(argc, argv, "wihvkn:l:o:cslbpd3:yzt:rg", longopts, NULL)) != -1)
   {
@@ -791,7 +801,7 @@ int main(int argc, char *argv[])
         m_blank_background = true;
         break;
       case key_config_opt:
-        keymap = KeyConfig::parseConfigFile(optarg);
+        m_keyboard.SetKeymap(optarg);
         break;
       case 0:
         break;
@@ -878,9 +888,11 @@ int main(int argc, char *argv[])
       m_audio_extension = true;
   }
   if(m_gen_log) {
+    printf("omxplayer SET LOGGING\n");
     CLog::SetLogLevel(LOG_LEVEL_DEBUG);
     CLog::Init("./");
   } else {
+    printf("omxplayer NO LOGGING\n");
     CLog::SetLogLevel(LOG_LEVEL_NONE);
   }
 
@@ -896,7 +908,8 @@ int main(int argc, char *argv[])
 
   m_av_clock = new OMXClock();
   m_omxcontrol.init(m_av_clock, &m_player_audio);
-  m_keyboard.setKeymap(keymap);
+  /* JEHUTTING */m_keyboard.Open();
+  //JEHUTTING m_keyboard.SetKeymap(keymap);
 
   m_thread_player = true;
 
@@ -1057,8 +1070,15 @@ int main(int argc, char *argv[])
       m_last_check_time = now;
     }
 
-     if (update) {
-    switch(m_omxcontrol.getEvent())
+    if (update) {
+
+    /* JEHUTTING Keys no longer to dbus interface */
+    KeyConfig::Action event;
+    event = m_keyboard.GetEvent();
+    if(event == KeyConfig::ACTION_BLANK)
+      event = (KeyConfig::Action)m_omxcontrol.getEvent();
+
+    switch(event)
     {
       case KeyConfig::ACTION_SHOW_INFO:
         m_tv_show_info = !m_tv_show_info;
@@ -1568,6 +1588,10 @@ int main(int argc, char *argv[])
     }
     else if(m_has_audio && m_omx_pkt && !TRICKPLAY(m_av_clock->OMXPlaySpeed()) && m_omx_pkt->codec_type == AVMEDIA_TYPE_AUDIO)
     {
+#if defined(KEYBOARD_TEST)
+       int *jozef = NULL;
+       *jozef = 7; 
+#endif
       if(m_player_audio.AddPacket(m_omx_pkt))
         m_omx_pkt = NULL;
       else

@@ -1,18 +1,42 @@
+/*
+ *      Copyright (C) 2013 Harry Collard
+ *                    2014 Jozef Hutting
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ *
+ */
+
 #include <stdio.h>
-#include <stdlib.h>
-#include <stdint.h>
 #include <termios.h>
-#include <sys/ioctl.h>
-#include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <dbus/dbus.h>
 
-#include "utils/log.h"
 #include "Keyboard.h"
 
 Keyboard::Keyboard() 
 {
+  printf("Keyboard::Keyboard()\n");
+}
+
+Keyboard::~Keyboard() 
+{
+  printf("Keyboard::~Keyboard()\n");
+}
+
+void Keyboard::Open()
+{
+  printf("Keyboard::Open()\n");
   if (isatty(STDIN_FILENO)) 
   {
     struct termios new_termios;
@@ -32,35 +56,16 @@ Keyboard::Keyboard()
     fcntl(STDIN_FILENO, F_SETFL, orig_fl | O_NONBLOCK);
   }
 
-  if (dbus_connect() < 0)
-  {
-    CLog::Log(LOGWARNING, "DBus connection failed");
-  } 
-  else 
-  {
-    CLog::Log(LOGDEBUG, "DBus connection succeeded");
-  }
-
-  dbus_threads_init_default();
-  Create();
-}
-
-Keyboard::~Keyboard() 
-{
-  Close();
+  m_keymap = KeyConfig::buildDefaultKeymap();
 }
 
 void Keyboard::Close()
 {
-  restore_term();
-  dbus_disconnect();
-  if (ThreadHandle()) 
-  {
-    StopThread();
-  }
+  printf("Keyboard::Close()\n");
+  RestoreTerm();
 }
 
-void Keyboard::restore_term() 
+void Keyboard::RestoreTerm() 
 {
   if (isatty(STDIN_FILENO)) 
   {
@@ -72,116 +77,28 @@ void Keyboard::restore_term()
   }
 }
 
-void Keyboard::Sleep(unsigned int dwMilliSeconds)
+KeyConfig::Action Keyboard::GetEvent() 
 {
-  struct timespec req;
-  req.tv_sec = dwMilliSeconds / 1000;
-  req.tv_nsec = (dwMilliSeconds % 1000) * 1000000;
+  int ch[8];
+  int chnum = 0;
 
-  while ( nanosleep(&req, &req) == -1 && errno == EINTR && (req.tv_nsec > 0 || req.tv_sec > 0));
+  while((ch[chnum] = getchar()) != EOF) chnum++;
+
+  if (chnum == 0)
+    return KeyConfig::ACTION_BLANK;
+
+  if (chnum > 1) 
+    ch[0] = ch[chnum - 1] | (ch[chnum - 2] << 8);
+
+  auto it = m_keymap.find(ch[0]);
+  if(it != m_keymap.end())
+    return (enum KeyConfig::Action)it->second;
+  else
+    return KeyConfig::ACTION_BLANK;
 }
 
-void Keyboard::Process() 
+void Keyboard::SetKeymap(std::string filepath) 
 {
-  while(!m_bStop && conn && dbus_connection_read_write_dispatch(conn, 0)) 
-  {
-    int ch[8];
-    int chnum = 0;
-
-    while ((ch[chnum] = getchar()) != EOF) chnum++;
-
-    if (chnum > 1) ch[0] = ch[chnum - 1] | (ch[chnum - 2] << 8);
-
-    if (m_keymap[ch[0]] != 0)
-          send_action(m_keymap[ch[0]]);
-    else
-      Sleep(20);
-  }
+  m_keymap = KeyConfig::parseConfigFile(filepath);
 }
 
-void Keyboard::send_action(int action) 
-{
-  DBusMessage *message = NULL, *reply = NULL;
-  DBusError error;
-
-  dbus_error_init(&error);
-
-  if (!(message = dbus_message_new_method_call(OMXPLAYER_DBUS_NAME, 
-                                              OMXPLAYER_DBUS_PATH_SERVER, 
-                                              OMXPLAYER_DBUS_INTERFACE_PLAYER,
-                                              "Action"))) 
-  {
-    CLog::Log(LOGWARNING, "Keyboard: DBus error 1");
-    goto fail;
-  }
-
-  dbus_message_append_args(message, DBUS_TYPE_INT32, &action, DBUS_TYPE_INVALID);
-  
-  reply = dbus_connection_send_with_reply_and_block(conn, message, -1, &error);
-
-  if (!reply || dbus_error_is_set(&error))
-    goto fail;
-
-  dbus_message_unref(message);
-  dbus_message_unref(reply);
-
-  return;
-
-fail:
-  if (dbus_error_is_set(&error)) 
-  {
-    printf("%s", error.message);
-    dbus_error_free(&error);
-  }
-
-  if (message)
-    dbus_message_unref(message);
-
-  if (reply)
-    dbus_message_unref(reply);
-}
-
-void Keyboard::setKeymap(std::map<int,int> keymap) 
-{
-  m_keymap = keymap;
-}
-
-int Keyboard::dbus_connect() 
-{
-  DBusError error;
-
-  dbus_error_init(&error);
-  if (!(conn = dbus_bus_get_private(DBUS_BUS_SESSION, &error))) 
-  {
-    CLog::Log(LOGWARNING, "dbus_bus_get_private(): %s", error.message);
-        goto fail;
-  }
-
-  dbus_connection_set_exit_on_disconnect(conn, FALSE);
-
-  return 0;
-
-fail:
-    if (dbus_error_is_set(&error))
-        dbus_error_free(&error);
-
-    if (conn) 
-    {
-        dbus_connection_close(conn);
-        dbus_connection_unref(conn);
-        conn = NULL;
-    }
-
-    return -1;
-
-}
-
-void Keyboard::dbus_disconnect() 
-{
-    if (conn) 
-    {
-        dbus_connection_close(conn);
-        dbus_connection_unref(conn);
-        conn = NULL;
-    }
-}
