@@ -18,6 +18,7 @@
  */
 
 //JEHUTTING 
+// Keyboard or OMXControl test
 //#define KEYBOARD_TEST
 
 #include <stdio.h>
@@ -57,7 +58,16 @@ extern "C" {
 #include "OMXPlayerVideo.h"
 #include "OMXPlayerAudio.h"
 #include "OMXPlayerSubtitles.h"
+// JEHUTTING
+// Use the NO_DBUS_USAGE compiler directive if you DON'T WANT to have an
+// omxplayer able to use the D-BUS AT ALL. Add a line "CFLAGS+=-DNO_DBUS_USAGE" 
+// to your Makefile to do so.
+// If you (have an omxplayer build WITH the D-Bus interface BUT) OCCASIONALLY 
+// want to run without (omxplayer being controlled through) the D-Bus interface
+// (OMXControl) use omxplayer option "--no-dbus".
+#if !defined(NO_DBUS_USAGE)
 #include "OMXControl.h"
+#endif
 #include "DllOMX.h"
 #include "Srt.h"
 //JEHUTTING #include "KeyConfig.h"
@@ -104,7 +114,11 @@ OMXReader         m_omx_reader;
 int               m_audio_index_use     = -1;
 bool              m_thread_player       = false;
 OMXClock          *m_av_clock           = NULL;
-OMXControl        m_omxcontrol;
+// JEHUTTING
+#if !defined(NO_DBUS_USAGE)
+bool              m_dbus                = true;
+OMXControl        *m_omxcontrol         = NULL;
+#endif
 Keyboard          m_keyboard;
 COMXStreamInfo    m_hints_audio;
 COMXStreamInfo    m_hints_video;
@@ -192,6 +206,9 @@ void print_usage()
   printf("              --live                    Set for live tv or vod type stream\n");
   printf("              --layout                  Set output speaker layout (e.g. 5.1)\n");
   printf("              --key-config <file>       Uses key bindings specified in <file> instead of the default\n");
+#if !defined(NO_DBUS_USAGE)
+  printf("              --no-dbus                 no omxplayer control through the D-Bus interface\n");
+#endif
 }
 
 // JEHUTTING TODO Key bindings depend on the key mapping
@@ -583,6 +600,7 @@ int main(int argc, char *argv[])
   const int orientation_opt = 0x204;
   const int live_opt = 0x205;
   const int layout_opt = 0x206;
+  const int no_dbus_opt = 0x208;
 
   struct option longopts[] = {
     { "info",         no_argument,        NULL,          'i' },
@@ -626,6 +644,9 @@ int main(int argc, char *argv[])
     { "orientation",  required_argument,  NULL,          orientation_opt },
     { "live",         no_argument,        NULL,          live_opt },
     { "layout",       required_argument,  NULL,          layout_opt },
+#if !defined(NO_DBUS_USAGE)
+    { "no-dbus",      no_argument,        NULL,          no_dbus_opt },
+#endif
     { 0, 0, 0, 0 }
   };
 
@@ -820,6 +841,11 @@ int main(int argc, char *argv[])
       case ':':
         return 0;
         break;
+#if !defined(NO_DBUS_USAGE)
+      case no_dbus_opt:
+        m_dbus = false;
+        break;
+#endif
       default:
         return 0;
         break;
@@ -907,7 +933,13 @@ int main(int argc, char *argv[])
     printf("Only %dM of gpu_mem is configured. Try running \"sudo raspi-config\" and ensure that \"memory_split\" has a value of %d or greater\n", gpu_mem, min_gpu_mem);
 
   m_av_clock = new OMXClock();
-  m_omxcontrol.init(m_av_clock, &m_player_audio);
+#if !defined(NO_DBUS_USAGE)
+  if(m_dbus)
+  {
+    m_omxcontrol = new OMXControl();
+    m_omxcontrol->Open(m_av_clock, &m_player_audio);
+  }
+#endif
   /* JEHUTTING */m_keyboard.Open();
   //JEHUTTING m_keyboard.SetKeymap(keymap);
 
@@ -1072,11 +1104,12 @@ int main(int argc, char *argv[])
 
     if (update) {
 
-    /* JEHUTTING Keys no longer to dbus interface */
     KeyConfig::Action event;
     event = m_keyboard.GetEvent();
-    if(event == KeyConfig::ACTION_BLANK)
-      event = (KeyConfig::Action)m_omxcontrol.getEvent();
+#if !defined(NO_DBUS_USAGE)
+    if(event == KeyConfig::ACTION_BLANK && m_omxcontrol)
+      event = m_omxcontrol->GetEvent();
+#endif
 
     switch(event)
     {
@@ -1633,6 +1666,15 @@ do_exit:
   {
     m_BcmHost.vc_tv_hdmi_power_on_explicit_new(HDMI_MODE_HDMI, (HDMI_RES_GROUP_T)tv_state.display.hdmi.group, tv_state.display.hdmi.mode);
   }
+
+#if !defined(NO_DBUS_USAGE)
+  if(m_omxcontrol)
+  {
+    m_omxcontrol->Close();
+    delete m_omxcontrol;
+    m_omxcontrol = NULL; 
+  } 
+#endif
 
   m_av_clock->OMXStop();
   m_av_clock->OMXStateIdle();

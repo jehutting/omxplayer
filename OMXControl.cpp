@@ -1,3 +1,22 @@
+/*
+ *      Copyright (C) 2013 Harry Collard
+ *                    2014 Jozef Hutting
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ *
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -11,12 +30,32 @@
 
 #include "utils/log.h"
 #include "OMXControl.h"
-#include "KeyConfig.h"
 
 #define CLASSNAME "OMXControl"
 
+// 12-JAN-2014 JEHUTTING TODO
+// It is not clear what happens when the application gets aborted (by
+// e.g. an SIGSEGV signal). Is the dbus-daemon terminated? --> NO
+// Who or what terminates the dbus-daemon?
+// A "ps xaf | grep -i dbus" still shows the started dbus-daemon!
+// A new run of omxplayer doesn't start a new one.
+
 OMXControl::OMXControl() 
 {
+  /* JEHUTTING */ printf("OMXControl::OMXControl()\n");
+}
+
+OMXControl::~OMXControl() 
+{
+  /* JEHUTTING */ printf("OMXControl::~OMXControl()\n");
+}
+
+void OMXControl::Open(OMXClock *m_av_clock, OMXPlayerAudio *m_player_audio) 
+{
+  /* JEHUTTING */ printf("OMXControl::Open()\n");
+  clock = m_av_clock;
+  audio = m_player_audio;
+
   if (dbus_connect() < 0) 
   {
     CLog::Log(LOGWARNING, "DBus connection failed");
@@ -29,16 +68,12 @@ OMXControl::OMXControl()
   dbus_threads_init_default();
 }
 
-OMXControl::~OMXControl() 
+void OMXControl::Close() 
 {
-    dbus_disconnect();
+  /* JEHUTTING */ printf("OMXControl::Close()\n");
+  dbus_disconnect();
 }
 
-void OMXControl::init(OMXClock *m_av_clock, OMXPlayerAudio *m_player_audio) 
-{
-  clock = m_av_clock;
-  audio = m_player_audio;
-}
 void OMXControl::dispatch() 
 {
   if (bus)
@@ -53,7 +88,7 @@ int OMXControl::dbus_connect()
   if (!(bus = dbus_bus_get_private(DBUS_BUS_SESSION, &error))) 
   {
     CLog::Log(LOGWARNING, "dbus_bus_get_private(): %s", error.message);
-        goto fail;
+    goto fail;
   }
 
   dbus_connection_set_exit_on_disconnect(bus, FALSE);
@@ -64,43 +99,43 @@ int OMXControl::dbus_connect()
         DBUS_NAME_FLAG_DO_NOT_QUEUE,
         &error) != DBUS_REQUEST_NAME_REPLY_PRIMARY_OWNER) 
   {
-        if (dbus_error_is_set(&error)) 
-        {
-            CLog::Log(LOGWARNING, "dbus_bus_request_name(): %s", error.message);
-            goto fail;
-        }
-
-        CLog::Log(LOGWARNING, "Failed to acquire D-Bus name '%s'", OMXPLAYER_DBUS_NAME);
-        goto fail;
+    if (dbus_error_is_set(&error)) 
+    {
+      CLog::Log(LOGWARNING, "dbus_bus_request_name(): %s", error.message);
+      goto fail;
     }
 
-    return 0;
+    CLog::Log(LOGWARNING, "Failed to acquire D-Bus name '%s'", OMXPLAYER_DBUS_NAME);
+    goto fail;
+  }
+
+  return 0;
 
 fail:
-    if (dbus_error_is_set(&error))
-        dbus_error_free(&error);
+  if (dbus_error_is_set(&error))
+    dbus_error_free(&error);
 
-    if (bus) 
-    {
-        dbus_connection_close(bus);
-        dbus_connection_unref(bus);
-        bus = NULL;
-    }
+  if (bus) 
+  {
+    dbus_connection_close(bus);
+    dbus_connection_unref(bus);
+    bus = NULL;
+  }
 
-    return -1;
+  return -1;
 }
 
 void OMXControl::dbus_disconnect() 
 {
-    if (bus) 
-    {
-        dbus_connection_close(bus);
-        dbus_connection_unref(bus);
-        bus = NULL;
-    }
+  if (bus) 
+  {
+    dbus_connection_close(bus);
+    dbus_connection_unref(bus);
+    bus = NULL;
+  }
 }
 
-int OMXControl::getEvent() 
+KeyConfig::Action OMXControl::GetEvent() 
 {
   if (!bus)
     return KeyConfig::ACTION_BLANK;
@@ -110,6 +145,7 @@ int OMXControl::getEvent()
 
   if (m == NULL) 
     return KeyConfig::ACTION_BLANK;
+
   if (dbus_message_is_method_call(m, OMXPLAYER_DBUS_INTERFACE_ROOT, "Quit")) 
   {
     dbus_respond_ok(m);
@@ -194,9 +230,9 @@ int OMXControl::getEvent()
     // Make sure a value is sent for seeking
     if (dbus_error_is_set(&error)) 
     {
-          dbus_error_free(&error);
-          dbus_respond_ok(m);
-          return KeyConfig::ACTION_BLANK;
+      dbus_error_free(&error);
+      dbus_respond_ok(m);
+      return KeyConfig::ACTION_BLANK;
     } 
     else 
     {
@@ -266,9 +302,8 @@ int OMXControl::getEvent()
   {
     dbus_respond_double(m, 1.125);
     return KeyConfig::ACTION_BLANK;
-
-    // Implement extra OMXPlayer controls
   } 
+  // Implement extra OMXPlayer controls
   else if (dbus_message_is_method_call(m, OMXPLAYER_DBUS_INTERFACE_PLAYER, "Action")) 
   {
     DBusError error;
@@ -286,7 +321,7 @@ int OMXControl::getEvent()
     else 
     {
       dbus_respond_ok(m);
-      return action; // Directly return enum
+      return (enum KeyConfig::Action)action; // Directly return enum
     }
   }
 

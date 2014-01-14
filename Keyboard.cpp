@@ -26,17 +26,17 @@
 
 Keyboard::Keyboard() 
 {
-  printf("Keyboard::Keyboard()\n");
+  /* JEHUTTING */ printf("Keyboard::Keyboard()\n");
 }
 
 Keyboard::~Keyboard() 
 {
-  printf("Keyboard::~Keyboard()\n");
+  /* JEHUTTING */ printf("Keyboard::~Keyboard()\n");
 }
 
 void Keyboard::Open()
 {
-  printf("Keyboard::Open()\n");
+  /* JEHUTTING */ printf("Keyboard::Open()\n");
   if (isatty(STDIN_FILENO)) 
   {
     struct termios new_termios;
@@ -61,7 +61,7 @@ void Keyboard::Open()
 
 void Keyboard::Close()
 {
-  printf("Keyboard::Close()\n");
+  /* JEHUTTING */ printf("Keyboard::Close()\n");
   RestoreTerm();
 }
 
@@ -82,7 +82,8 @@ KeyConfig::Action Keyboard::GetEvent()
   int ch[8];
   int chnum = 0;
 
-  while((ch[chnum] = getchar()) != EOF) chnum++;
+  while((ch[chnum] = getchar()) != EOF)
+    chnum++;
 
   if (chnum == 0)
     return KeyConfig::ACTION_BLANK;
