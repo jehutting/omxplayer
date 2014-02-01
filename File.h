@@ -74,6 +74,7 @@ public:
   int GetChunkSize() { return 6144 /*FFMPEG_FILE_BUFFER_SIZE*/; };
   int IoControl(EIoControl request, void* param);
   bool IsEOF();
+  bool IsPipe() { return m_bPipe; }
 private:
   unsigned int m_flags;
   FILE  *m_pFile;

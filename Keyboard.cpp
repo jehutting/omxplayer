@@ -26,17 +26,14 @@
 
 Keyboard::Keyboard() 
 {
-  /* JEHUTTING */ printf("Keyboard::Keyboard()\n");
 }
 
 Keyboard::~Keyboard() 
 {
-  /* JEHUTTING */ printf("Keyboard::~Keyboard()\n");
 }
 
 void Keyboard::Open()
 {
-  /* JEHUTTING */ printf("Keyboard::Open()\n");
   if (isatty(STDIN_FILENO)) 
   {
     struct termios new_termios;
@@ -61,7 +58,6 @@ void Keyboard::Open()
 
 void Keyboard::Close()
 {
-  /* JEHUTTING */ printf("Keyboard::Close()\n");
   RestoreTerm();
 }
 

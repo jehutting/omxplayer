@@ -119,7 +119,7 @@ OMXClock          *m_av_clock           = NULL;
 bool              m_dbus                = true;
 OMXControl        *m_omxcontrol         = NULL;
 #endif
-Keyboard          m_keyboard;
+Keyboard          *m_keyboard;
 COMXStreamInfo    m_hints_audio;
 COMXStreamInfo    m_hints_video;
 OMXPacket         *m_omx_pkt            = NULL;
@@ -138,23 +138,42 @@ bool              m_has_subtitle        = false;
 float             m_display_aspect      = 0.0f;
 bool              m_boost_on_downmix    = true;
 bool              m_gen_log             = false;
+string            m_gen_log_path        = "./"; // default current working directory (CWD)
 
 enum{ERROR=-1,SUCCESS,ONEBYTE};
 
 void sig_handler(int s)
 {
+#define SIG_HANDLER_DEBUG
+#if defined(SIG_HANDLER_DEBUG)
+  printf("omxplayer:: sig_handler() ");
+  if (s == SIGINT)
+    printf("SIGINT\n");
+  else if (s == SIGABRT)
+    printf("SIGABRT\n");
+  else if (s == SIGSEGV)
+    printf("SIGSEGV\n");
+  else if (s == SIGFPE)
+    printf("SIGFPE\n");
+#endif
+
   if (s==SIGINT && !g_abort)
   {
      signal(SIGINT, SIG_DFL);
-     /* JEHUTTING */ printf("omxplayer aborting through g_abort...\n");
+#if defined(SIG_HANDLER_DEBUG)
+     printf("omxplayer aborting through g_abort...\n");
+#endif
      g_abort = true;
      return;
   }
   signal(SIGABRT, SIG_DFL);
   signal(SIGSEGV, SIG_DFL);
   signal(SIGFPE, SIG_DFL);
-  m_keyboard.Close();
-  /* JEHUTTING */ printf("omxplayer aborting...\n");
+  if (m_keyboard)
+    m_keyboard->Close();
+#if defined(SIG_HANDLER_DEBUG)
+  printf("omxplayer aborting...\n");
+#endif
   abort();
 }
 
@@ -180,7 +199,7 @@ void print_usage()
   printf("         -t / --sid index               show subtitle with index\n");
   printf("         -r / --refresh                 adjust framerate/resolution to video\n");
   printf("         -g / --genlog                  generate log file\n");
-  printf("         -l / --pos n                   start position (hh:mm:ss)\n");
+  printf("         -l / --pos n                   start position (in seconds)\n");
   printf("         -b / --blank                   set background to black\n");
   printf("              --no-boost-on-downmix     don't boost volume when downmixing\n");
   printf("              --vol n                   Set initial volume in millibels (default 0)\n");
@@ -209,6 +228,8 @@ void print_usage()
 #if !defined(NO_DBUS_USAGE)
   printf("              --no-dbus                 no omxplayer control through the D-Bus interface\n");
 #endif
+  // JEHUTTING New option
+  printf("              --genlog-path path        set path of the log file\n");
 }
 
 // JEHUTTING TODO Key bindings depend on the key mapping
@@ -339,27 +360,6 @@ static void FlushStreams(double pts)
   }
 }
 
-static void CallbackTvServiceCallback(void *userdata, uint32_t reason, uint32_t param1, uint32_t param2)
-{
-  sem_t *tv_synced = (sem_t *)userdata;
-  switch(reason)
-  {
-  case VC_HDMI_UNPLUGGED:
-    break;
-  case VC_HDMI_STANDBY:
-    break;
-  case VC_SDTV_NTSC:
-  case VC_SDTV_PAL:
-  case VC_HDMI_HDMI:
-  case VC_HDMI_DVI:
-    // Signal we are ready now
-    sem_post(tv_synced);
-    break;
-  default:
-     break;
-  }
-}
-
 void SetVideoMode(int width, int height, int fpsrate, int fpsscale, FORMAT_3D_T is3d)
 {
   int32_t num_modes = 0;
@@ -479,14 +479,7 @@ void SetVideoMode(int width, int height, int fpsrate, int fpsscale, FORMAT_3D_T 
     }
 
     printf("ntsc_freq:%d %s%s\n", ntsc_freq, property.param1 == HDMI_3D_FORMAT_SBS_HALF ? "3DSBS":"", property.param1 == HDMI_3D_FORMAT_TB_HALF ? "3DTB":"");
-    sem_t tv_synced;
-    sem_init(&tv_synced, 0, 0);
-    m_BcmHost.vc_tv_register_callback(CallbackTvServiceCallback, &tv_synced);
-    int success = m_BcmHost.vc_tv_hdmi_power_on_explicit_new(HDMI_MODE_HDMI, (HDMI_RES_GROUP_T)group, tv_found->code);
-    if (success == 0)
-      sem_wait(&tv_synced);
-    m_BcmHost.vc_tv_unregister_callback(CallbackTvServiceCallback);
-    sem_destroy(&tv_synced);
+    m_BcmHost.vc_tv_hdmi_power_on_explicit_new(HDMI_MODE_HDMI, (HDMI_RES_GROUP_T)group, tv_found->code);
   }
   if (supported_modes)
     delete[] supported_modes;
@@ -572,8 +565,6 @@ static void blank_background(bool enable)
 
 int main(int argc, char *argv[])
 {
-  printf("omxplayer main\n");
-
   signal(SIGSEGV, sig_handler);
   signal(SIGABRT, sig_handler);
   signal(SIGFPE, sig_handler);
@@ -629,6 +620,7 @@ int main(int argc, char *argv[])
   const int live_opt = 0x205;
   const int layout_opt = 0x206;
   const int no_dbus_opt = 0x208;
+  const int genlog_path_opt = 0x209;
 
   struct option longopts[] = {
     { "info",         no_argument,        NULL,          'i' },
@@ -675,6 +667,7 @@ int main(int argc, char *argv[])
 #if !defined(NO_DBUS_USAGE)
     { "no-dbus",      no_argument,        NULL,          no_dbus_opt },
 #endif
+    { "genlog-path",  required_argument,  NULL,          genlog_path_opt },
     { 0, 0, 0, 0 }
   };
 
@@ -698,6 +691,14 @@ int main(int argc, char *argv[])
       case 'r':
         m_refresh = true;
         break;
+      case genlog_path_opt:
+        if(!Exists(optarg))
+        {
+          printf("Path \"%s\" for log file not found.\n", optarg);
+          return 0;
+        }
+        m_gen_log_path = optarg;
+        /* fall through */
       case 'g':
         m_gen_log = true;
         break;
@@ -757,18 +758,10 @@ int main(int argc, char *argv[])
           m_audio_index_use = 0;
         break;
       case 'l':
-        {
-          if(strchr(optarg, ':'))
-          {
-            unsigned int h, m, s;
-            if(sscanf(optarg, "%u:%u:%u", &h, &m, &s) == 3)
-              m_incr = h*3600 + m*60 + s;
-          }
-          else
-          {
-            m_incr = atof(optarg);
-          }
-        }
+        m_incr = atof(optarg) ;
+        if (m_incr < 0)
+            m_incr = 0;
+        m_seek_flush = true;
         break;
       case no_osd_opt:
         m_osd = false;
@@ -858,7 +851,8 @@ int main(int argc, char *argv[])
         m_blank_background = true;
         break;
       case key_config_opt:
-        m_keyboard.SetKeymap(optarg);
+        if (m_keyboard)
+          m_keyboard->SetKeymap(optarg);
         break;
       case 0:
         break;
@@ -949,12 +943,11 @@ int main(int argc, char *argv[])
     if (!extension.IsEmpty() && m_musicExtensions.Find(extension.ToLower()) != -1)
       m_audio_extension = true;
   }
+
   if(m_gen_log) {
-    printf("omxplayer SET LOGGING\n");
     CLog::SetLogLevel(LOG_LEVEL_DEBUG);
-    CLog::Init("./");
+    CLog::Init(m_gen_log_path.c_str());
   } else {
-    printf("omxplayer NO LOGGING\n");
     CLog::SetLogLevel(LOG_LEVEL_NONE);
   }
 
@@ -969,6 +962,9 @@ int main(int argc, char *argv[])
     printf("Only %dM of gpu_mem is configured. Try running \"sudo raspi-config\" and ensure that \"memory_split\" has a value of %d or greater\n", gpu_mem, min_gpu_mem);
 
   m_av_clock = new OMXClock();
+/*JEHUTTING*/  if(!m_av_clock->OMXInitialize())
+/*JEHUTTING*/    goto do_exit;
+
 #if !defined(NO_DBUS_USAGE)
   if(m_dbus)
   {
@@ -976,8 +972,14 @@ int main(int argc, char *argv[])
     m_omxcontrol->Open(m_av_clock, &m_player_audio);
   }
 #endif
-  /* JEHUTTING */m_keyboard.Open();
+  /* JEHUTTING */
+  // Fix cat <file> | omxplayer pipe:0
+  if(!IsPipe(m_filename))
+  {
+    m_keyboard = new Keyboard();
+    m_keyboard->Open();
   //JEHUTTING m_keyboard.SetKeymap(keymap);
+  }
 
   m_thread_player = true;
 
@@ -1011,8 +1013,8 @@ int main(int argc, char *argv[])
   if (m_refresh && !m_no_hdmi_clock_sync)
     m_hdmi_clock_sync = true;
 
-  if(!m_av_clock->OMXInitialize())
-    goto do_exit;
+//JEHUTTING  if(!m_av_clock->OMXInitialize())
+//JEHUTTING    goto do_exit;
 
   if(m_hdmi_clock_sync && !m_av_clock->HDMIClockSync())
     goto do_exit;
@@ -1026,7 +1028,7 @@ int main(int argc, char *argv[])
 
   if(m_audio_index_use != -1)
     m_omx_reader.SetActiveStream(OMXSTREAM_AUDIO, m_audio_index_use);
-          
+
   if(m_has_video && m_refresh)
   {
     memset(&tv_state, 0, sizeof(TV_DISPLAY_STATE_T));
@@ -1125,6 +1127,15 @@ int main(int argc, char *argv[])
 
   PrintSubtitleInfo();
 
+/* JEHUTTING*/
+//#define NO_BUFFERING
+#define FIX_ErrorInsufficientResources
+#if defined(FIX_ErrorInsufficientResources)
+   m_av_clock->OMXReset(m_has_video, m_has_audio);
+   m_av_clock->OMXStateExecute();
+   sentStarted = true;
+#endif
+
   while(!m_stop)
   {
     if(g_abort)
@@ -1140,8 +1151,9 @@ int main(int argc, char *argv[])
 
     if (update) {
 
-    KeyConfig::Action event;
-    event = m_keyboard.GetEvent();
+    KeyConfig::Action event = KeyConfig::ACTION_BLANK;
+    if(m_keyboard)
+      event = m_keyboard->GetEvent();
 #if !defined(NO_DBUS_USAGE)
     if(event == KeyConfig::ACTION_BLANK && m_omxcontrol)
       event = m_omxcontrol->GetEvent();
@@ -1476,6 +1488,7 @@ int main(int argc, char *argv[])
       goto do_exit;
     }
 
+#if !defined(NO_BUFFERING)
     if (update)
     {
       /* when the video/audio fifos are low, we pause clock, when high we resume */
@@ -1483,6 +1496,7 @@ int main(int argc, char *argv[])
       double audio_pts = m_player_audio.GetCurrentPTS();
       double video_pts = m_player_video.GetCurrentPTS();
 
+#if 0
       if (0 && m_av_clock->OMXIsPaused())
       {
         double old_stamp = stamp;
@@ -1496,6 +1510,7 @@ int main(int argc, char *argv[])
           stamp = m_av_clock->OMXMediaTime();
         }
       }
+#endif
 
       float audio_fifo = audio_pts == DVD_NOPTS_VALUE ? 0.0f : audio_pts / DVD_TIME_BASE - stamp * 1e-6;
       float video_fifo = video_pts == DVD_NOPTS_VALUE ? 0.0f : video_pts / DVD_TIME_BASE - stamp * 1e-6;
@@ -1564,7 +1579,9 @@ int main(int argc, char *argv[])
             if (latency > m_threshold)
             {
               CLog::Log(LOGDEBUG, "Resume %.2f,%.2f (%d,%d,%d,%d) EOF:%d PKT:%p\n", audio_fifo, video_fifo, audio_fifo_low, video_fifo_low, audio_fifo_high, video_fifo_high, m_omx_reader.IsEof(), m_omx_pkt);
+#if !defined(FIX_ErrorInsufficientResources)
               m_av_clock->OMXStateExecute();
+#endif
               m_av_clock->OMXResume();
               m_latency = latency;
             }
@@ -1593,7 +1610,9 @@ int main(int argc, char *argv[])
         if (m_av_clock->OMXIsPaused())
         {
           CLog::Log(LOGDEBUG, "Resume %.2f,%.2f (%d,%d,%d,%d) EOF:%d PKT:%p\n", audio_fifo, video_fifo, audio_fifo_low, video_fifo_low, audio_fifo_high, video_fifo_high, m_omx_reader.IsEof(), m_omx_pkt);
+#if !defined(FIX_ErrorInsufficientResources)
           m_av_clock->OMXStateExecute();
+#endif
           m_av_clock->OMXResume();
         }
       }
@@ -1608,6 +1627,8 @@ int main(int argc, char *argv[])
         }
       }
     }
+#endif
+
     if (!sentStarted)
     {
       CLog::Log(LOGDEBUG, "COMXPlayer::HandleMessages - player started RESET");
@@ -1718,7 +1739,11 @@ do_exit:
   m_player_subtitles.Close();
   m_player_video.Close();
   m_player_audio.Close();
-  m_keyboard.Close();
+  if(m_keyboard)
+  {
+    m_keyboard->Close();
+    delete m_keyboard;
+  }
 
   if(m_omx_pkt)
   {
@@ -1728,8 +1753,9 @@ do_exit:
 
   m_omx_reader.Close();
 
-  m_av_clock->OMXDeinitialize();
-  if (m_av_clock)
+// JEHUTTING OMXDeinitialize() is already done in destructor
+//  m_av_clock->OMXDeinitialize();
+//  if (m_av_clock)
     delete m_av_clock;
 
   vc_tv_show_info(0);

@@ -33,36 +33,26 @@
 
 #define CLASSNAME "OMXControl"
 
-// 12-JAN-2014 JEHUTTING TODO
-// It is not clear what happens when the application gets aborted (by
-// e.g. an SIGSEGV signal). Is the dbus-daemon terminated? --> NO
-// Who or what terminates the dbus-daemon?
-// A "ps xaf | grep -i dbus" still shows the started dbus-daemon!
-// A new run of omxplayer doesn't start a new one.
-
 OMXControl::OMXControl() 
 {
-  /* JEHUTTING */ printf("OMXControl::OMXControl()\n");
 }
 
 OMXControl::~OMXControl() 
 {
-  /* JEHUTTING */ printf("OMXControl::~OMXControl()\n");
 }
 
 void OMXControl::Open(OMXClock *m_av_clock, OMXPlayerAudio *m_player_audio) 
 {
-  /* JEHUTTING */ printf("OMXControl::Open()\n");
   clock = m_av_clock;
   audio = m_player_audio;
 
   if (dbus_connect() < 0) 
   {
-    CLog::Log(LOGWARNING, "DBus connection failed");
+    CLog::Log(LOGERROR, "OMXControl::Open DBus connection failed");
   } 
   else 
   {
-    CLog::Log(LOGDEBUG, "DBus connection succeeded");
+    CLog::Log(LOGDEBUG, "OMXControl::Open DBus connection succeeded");
   }
 
   dbus_threads_init_default();
@@ -70,7 +60,6 @@ void OMXControl::Open(OMXClock *m_av_clock, OMXPlayerAudio *m_player_audio)
 
 void OMXControl::Close() 
 {
-  /* JEHUTTING */ printf("OMXControl::Close()\n");
   dbus_disconnect();
 }
 
@@ -87,7 +76,7 @@ int OMXControl::dbus_connect()
   dbus_error_init(&error);
   if (!(bus = dbus_bus_get_private(DBUS_BUS_SESSION, &error))) 
   {
-    CLog::Log(LOGWARNING, "dbus_bus_get_private(): %s", error.message);
+    CLog::Log(LOGERROR, "OMXControl::dbus_connect dbus_bus_get_private(): %s", error.message);
     goto fail;
   }
 
@@ -101,11 +90,11 @@ int OMXControl::dbus_connect()
   {
     if (dbus_error_is_set(&error)) 
     {
-      CLog::Log(LOGWARNING, "dbus_bus_request_name(): %s", error.message);
+      CLog::Log(LOGERROR, "OMXControl::dbus_connect dbus_bus_request_name(): %s", error.message);
       goto fail;
     }
 
-    CLog::Log(LOGWARNING, "Failed to acquire D-Bus name '%s'", OMXPLAYER_DBUS_NAME);
+    CLog::Log(LOGERROR, "OMXControl::dbus_connect Failed to acquire D-Bus name '%s'", OMXPLAYER_DBUS_NAME);
     goto fail;
   }
 
@@ -304,6 +293,10 @@ KeyConfig::Action OMXControl::GetEvent()
     return KeyConfig::ACTION_BLANK;
   } 
   // Implement extra OMXPlayer controls
+  // JEHUTTING This was made to let Keyboard keys go through the D-Bus interface
+  // Does omxplayer still needs this? Actions should go through properties
+  // and methods?
+#if 1
   else if (dbus_message_is_method_call(m, OMXPLAYER_DBUS_INTERFACE_PLAYER, "Action")) 
   {
     DBusError error;
@@ -324,6 +317,7 @@ KeyConfig::Action OMXControl::GetEvent()
       return (enum KeyConfig::Action)action; // Directly return enum
     }
   }
+#endif
 
   return KeyConfig::ACTION_BLANK;
 }
@@ -351,7 +345,7 @@ DBusHandlerResult OMXControl::dbus_respond_string(DBusMessage *m, const char *te
 
   if (!reply) 
   {
-    CLog::Log(LOGWARNING, "Failed to allocate message");
+    CLog::Log(LOGWARNING, "OMXControl::dbus_respond_string Failed to allocate message");
     return DBUS_HANDLER_RESULT_NEED_MEMORY;
   }
 
@@ -370,7 +364,7 @@ DBusHandlerResult OMXControl::dbus_respond_int64(DBusMessage *m, int64_t i)
 
   if (!reply) 
   {
-    CLog::Log(LOGWARNING, "Failed to allocate message");
+    CLog::Log(LOGWARNING, "OMXControl::dbus_respond_int64 Failed to allocate message");
     return DBUS_HANDLER_RESULT_NEED_MEMORY;
   }
 
@@ -389,7 +383,7 @@ DBusHandlerResult OMXControl::dbus_respond_double(DBusMessage *m, double d)
 
   if (!reply) 
   {
-    CLog::Log(LOGWARNING, "Failed to allocate message");
+    CLog::Log(LOGWARNING, "OMXControl::dbus_respond_double Failed to allocate message");
     return DBUS_HANDLER_RESULT_NEED_MEMORY;
   }
 
@@ -408,7 +402,7 @@ DBusHandlerResult OMXControl::dbus_respond_boolean(DBusMessage *m, int b)
 
   if (!reply) 
   {
-    CLog::Log(LOGWARNING, "Failed to allocate message");
+    CLog::Log(LOGWARNING, "OMXControl::dbus_respond_boolean Failed to allocate message");
     return DBUS_HANDLER_RESULT_NEED_MEMORY;
   }
 
@@ -427,7 +421,7 @@ DBusHandlerResult OMXControl::dbus_respond_array(DBusMessage *m, const char *arr
 
   if (!reply) 
   {
-    CLog::Log(LOGWARNING, "Failed to allocate message");
+    CLog::Log(LOGWARNING, "OMXControl::dbus_respond_array Failed to allocate message");
     return DBUS_HANDLER_RESULT_NEED_MEMORY;
   }
 

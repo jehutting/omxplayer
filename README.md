@@ -63,7 +63,7 @@ Using OMXPlayer
          -t / --sid index               show subtitle with index
          -r / --refresh                 adjust framerate/resolution to video
          -g / --genlog                  generate log file
-         -l / --pos n                   start position (hh:mm:ss)
+         -l / --pos n                   start position (in seconds)
          -b / --blank                   set background to black
               --no-boost-on-downmix     don't boost volume when downmixing
               --vol n                   Set initial volume in millibels (default 0)
@@ -88,6 +88,8 @@ Using OMXPlayer
               --live                    Set for live tv or vod type stream
               --layout                  Set output speaker layout (e.g. 5.1)
               --key-config <file>       Uses key bindings specified in <file> instead of the default
+              --no-dbus                 no omxplayer control through the D-Bus interface
+              --genlog-path path        set path of the log file
 
 For example:
 

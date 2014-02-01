@@ -131,10 +131,14 @@ bool OMXReader::Open(std::string filename, bool dump_format, bool live /* =false
   if(m_filename.substr(0, 8) == "shout://" )
     m_filename.replace(0, 8, "http://");
 
-  if(m_filename.substr(0,6) == "mms://" || m_filename.substr(0,7) == "mmsh://" || m_filename.substr(0,7) == "mmst://" || m_filename.substr(0,7) == "mmsu://" ||
-      m_filename.substr(0,7) == "http://" || 
-      m_filename.substr(0,7) == "rtmp://" || m_filename.substr(0,6) == "udp://" ||
-      m_filename.substr(0,7) == "rtsp://" )
+  if(m_filename.substr(0,6) == "mms://"  || 
+     m_filename.substr(0,7) == "mmsh://" || 
+     m_filename.substr(0,7) == "mmst://" || 
+     m_filename.substr(0,7) == "mmsu://" ||
+     m_filename.substr(0,7) == "http://" || 
+     m_filename.substr(0,7) == "rtmp://" ||
+     m_filename.substr(0,6) == "udp://"  ||
+     m_filename.substr(0,7) == "rtsp://" )
   {
     // ffmpeg dislikes the useragent from AirPlay urls
     //int idx = m_filename.Find("|User-Agent=AppleCoreMedia");
@@ -146,20 +150,20 @@ bool OMXReader::Open(std::string filename, bool dump_format, bool live /* =false
     // Enable seeking if http
     if(m_filename.substr(0,7) == "http://")
     {
-       av_dict_set(&d, "seekable", "1", 0);
+      av_dict_set(&d, "seekable", "1", 0);
     }
-    CLog::Log(LOGDEBUG, "COMXPlayer::OpenFile - avformat_open_input %s ", m_filename.c_str());
+    CLog::Log(LOGDEBUG, "OMXReader::OpenFile - avformat_open_input %s ", m_filename.c_str());
     result = m_dllAvFormat.avformat_open_input(&m_pFormatContext, m_filename.c_str(), iformat, &d);
     if(av_dict_count(d) == 0)
     {
-       CLog::Log(LOGDEBUG, "COMXPlayer::OpenFile - avformat_open_input enabled SEEKING ");
-       if(m_filename.substr(0,7) == "http://")
-         m_pFormatContext->pb->seekable = AVIO_SEEKABLE_NORMAL;
+      CLog::Log(LOGDEBUG, "OMXReader::OpenFile - avformat_open_input enabled SEEKING ");
+      if(m_filename.substr(0,7) == "http://")
+        m_pFormatContext->pb->seekable = AVIO_SEEKABLE_NORMAL;
     }
     av_dict_free(&d);
     if(result < 0)
     {
-      CLog::Log(LOGERROR, "COMXPlayer::OpenFile - avformat_open_input %s ", m_filename.c_str());
+      CLog::Log(LOGERROR, "OMXReader::OpenFile - avformat_open_input %s ", m_filename.c_str());
       Close();
       return false;
     }
@@ -170,7 +174,7 @@ bool OMXReader::Open(std::string filename, bool dump_format, bool live /* =false
 
     if (!m_pFile->Open(m_filename, flags))
     {
-      CLog::Log(LOGERROR, "COMXPlayer::OpenFile - %s ", m_filename.c_str());
+      CLog::Log(LOGERROR, "OMXReader::OpenFile Open '%s' failed ", m_filename.c_str());
       Close();
       return false;
     }
@@ -188,7 +192,7 @@ bool OMXReader::Open(std::string filename, bool dump_format, bool live /* =false
 
     if(!iformat)
     {
-      CLog::Log(LOGERROR, "COMXPlayer::OpenFile - av_probe_input_buffer %s ", m_filename.c_str());
+      CLog::Log(LOGERROR, "OMXReader::OpenFile - av_probe_input_buffer %s ", m_filename.c_str());
       Close();
       return false;
     }
@@ -198,6 +202,7 @@ bool OMXReader::Open(std::string filename, bool dump_format, bool live /* =false
     result = m_dllAvFormat.avformat_open_input(&m_pFormatContext, m_filename.c_str(), iformat, NULL);
     if(result < 0)
     {
+      CLog::Log(LOGERROR, "OMXReader::OpenFile - avformat_open_input %s ", m_filename.c_str());
       Close();
       return false;
     }
@@ -225,12 +230,14 @@ bool OMXReader::Open(std::string filename, bool dump_format, bool live /* =false
   result = m_dllAvFormat.avformat_find_stream_info(m_pFormatContext, NULL);
   if(result < 0)
   {
+    CLog::Log(LOGERROR, "OMXReader::OpenFile - avformat_find_stream_info '%s'\n", m_filename.c_str());
     Close();
     return false;
   }
 
   if(!GetStreams())
   {
+    CLog::Log(LOGERROR, "OMXReader::OpenFile - No streams '%s'", m_filename.c_str());
     Close();
     return false;
   }
@@ -245,18 +252,18 @@ bool OMXReader::Open(std::string filename, bool dump_format, bool live /* =false
       unsigned rate = len * 1000 / tim;
       unsigned maxrate = rate + 1024 * 1024 / 8;
       if(m_pFile->IoControl(IOCTRL_CACHE_SETRATE, &maxrate) >= 0)
-        CLog::Log(LOGDEBUG, "COMXPlayer::OpenFile - set cache throttle rate to %u bytes per second", maxrate);
+        CLog::Log(LOGDEBUG, "OMXReader::OpenFile - set cache throttle rate to %u bytes per second", maxrate);
     }
   }
 
-  m_speed       = DVD_PLAYSPEED_NORMAL;
+  m_speed = DVD_PLAYSPEED_NORMAL;
 
   if(dump_format)
     m_dllAvFormat.av_dump_format(m_pFormatContext, 0, m_filename.c_str(), 0);
 
   UpdateCurrentPTS();
 
-  m_open        = true;
+  m_open = true;
 
   return true;
 }
@@ -909,7 +916,8 @@ bool OMXReader::GetHints(OMXStreamType type, COMXStreamInfo &hints)
 
 bool OMXReader::IsEof()
 {
-  return m_eof;
+  //JEHUTTING Fix for cat <file> | omxplayer pipe:0
+  return m_eof || (m_pFile->IsPipe() && m_pFile->IsEOF());
 }
 
 void OMXReader::FreePacket(OMXPacket *pkt)
