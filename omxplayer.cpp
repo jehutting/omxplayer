@@ -199,7 +199,7 @@ void print_usage()
   printf("         -t / --sid index               show subtitle with index\n");
   printf("         -r / --refresh                 adjust framerate/resolution to video\n");
   printf("         -g / --genlog                  generate log file\n");
-  printf("         -l / --pos n                   start position (in seconds)\n");
+  printf("         -l / --pos n                   start position (hh:mm:ss)\n");
   printf("         -b / --blank                   set background to black\n");
   printf("              --no-boost-on-downmix     don't boost volume when downmixing\n");
   printf("              --vol n                   Set initial volume in millibels (default 0)\n");
@@ -360,6 +360,27 @@ static void FlushStreams(double pts)
   }
 }
 
+static void CallbackTvServiceCallback(void *userdata, uint32_t reason, uint32_t param1, uint32_t param2)
+{
+  sem_t *tv_synced = (sem_t *)userdata;
+  switch(reason)
+  {
+  case VC_HDMI_UNPLUGGED:
+    break;
+  case VC_HDMI_STANDBY:
+    break;
+  case VC_SDTV_NTSC:
+  case VC_SDTV_PAL:
+  case VC_HDMI_HDMI:
+  case VC_HDMI_DVI:
+    // Signal we are ready now
+    sem_post(tv_synced);
+    break;
+  default:
+     break;
+  }
+}
+
 void SetVideoMode(int width, int height, int fpsrate, int fpsscale, FORMAT_3D_T is3d)
 {
   int32_t num_modes = 0;
@@ -479,7 +500,14 @@ void SetVideoMode(int width, int height, int fpsrate, int fpsscale, FORMAT_3D_T 
     }
 
     printf("ntsc_freq:%d %s%s\n", ntsc_freq, property.param1 == HDMI_3D_FORMAT_SBS_HALF ? "3DSBS":"", property.param1 == HDMI_3D_FORMAT_TB_HALF ? "3DTB":"");
-    m_BcmHost.vc_tv_hdmi_power_on_explicit_new(HDMI_MODE_HDMI, (HDMI_RES_GROUP_T)group, tv_found->code);
+    sem_t tv_synced;
+    sem_init(&tv_synced, 0, 0);
+    m_BcmHost.vc_tv_register_callback(CallbackTvServiceCallback, &tv_synced);
+    int success = m_BcmHost.vc_tv_hdmi_power_on_explicit_new(HDMI_MODE_HDMI, (HDMI_RES_GROUP_T)group, tv_found->code);
+    if (success == 0)
+      sem_wait(&tv_synced);
+    m_BcmHost.vc_tv_unregister_callback(CallbackTvServiceCallback);
+    sem_destroy(&tv_synced);
   }
   if (supported_modes)
     delete[] supported_modes;
@@ -758,10 +786,18 @@ int main(int argc, char *argv[])
           m_audio_index_use = 0;
         break;
       case 'l':
-        m_incr = atof(optarg) ;
-        if (m_incr < 0)
-            m_incr = 0;
-        m_seek_flush = true;
+        {
+          if(strchr(optarg, ':'))
+          {
+            unsigned int h, m, s;
+            if(sscanf(optarg, "%u:%u:%u", &h, &m, &s) == 3)
+              m_incr = h*3600 + m*60 + s;
+          }
+          else
+          {
+            m_incr = atof(optarg);
+          }
+        }
         break;
       case no_osd_opt:
         m_osd = false;
