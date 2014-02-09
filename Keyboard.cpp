@@ -75,15 +75,22 @@ void Keyboard::RestoreTerm()
 
 KeyConfig::Action Keyboard::GetEvent() 
 {
-  int ch[8];
+  // An arrow key consists of a three character sequence:
+  //   0x1b (=ESC), 0x5b (='[') and ARROW
+  // where ARROW = 0x41 (='A') for arrow up
+  //             = 0x42 (='B') for arrow down
+  //             = 0x42 (='C') for arrow right
+  //             = 0x42 (='D') for arrow left
+  int ch[3]; // Handle max ONE arrow key at a time.
   int chnum = 0;
 
-  while((ch[chnum] = getchar()) != EOF)
+  while((chnum < 3) && ((ch[chnum] = getchar()) != EOF))
     chnum++;
 
   if (chnum == 0)
     return KeyConfig::ACTION_BLANK;
 
+  // KeyConfig uses only the last two characters of an arrow key
   if (chnum > 1) 
     ch[0] = ch[chnum - 1] | (ch[chnum - 2] << 8);
 
