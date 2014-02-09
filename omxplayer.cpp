@@ -144,7 +144,7 @@ enum{ERROR=-1,SUCCESS,ONEBYTE};
 
 void sig_handler(int s)
 {
-#define SIG_HANDLER_DEBUG
+//#define SIG_HANDLER_DEBUG
 #if defined(SIG_HANDLER_DEBUG)
   printf("omxplayer:: sig_handler() ");
   if (s == SIGINT)
@@ -1164,7 +1164,6 @@ int main(int argc, char *argv[])
   PrintSubtitleInfo();
 
 /* JEHUTTING*/
-//#define NO_BUFFERING
 #define FIX_ErrorInsufficientResources
 #if defined(FIX_ErrorInsufficientResources)
    m_av_clock->OMXReset(m_has_video, m_has_audio);
@@ -1524,7 +1523,6 @@ int main(int argc, char *argv[])
       goto do_exit;
     }
 
-#if !defined(NO_BUFFERING)
     if (update)
     {
       /* when the video/audio fifos are low, we pause clock, when high we resume */
@@ -1663,7 +1661,6 @@ int main(int argc, char *argv[])
         }
       }
     }
-#endif
 
     if (!sentStarted)
     {
