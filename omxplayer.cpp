@@ -52,7 +52,15 @@ extern "C" {
 #include "OMXPlayerVideo.h"
 #include "OMXPlayerAudio.h"
 #include "OMXPlayerSubtitles.h"
+// Use the NO_DBUS_USAGE compiler directive if you DON'T WANT to have an
+// omxplayer able to use the D-BUS AT ALL. Add a line "CFLAGS+=-DNO_DBUS_USAGE" 
+// to your Makefile to do so.
+// If you (have an omxplayer build WITH the D-Bus interface BUT) OCCASIONALLY 
+// want to run without (omxplayer being controlled through) the D-Bus interface
+// (OMXControl) use omxplayer option "--no-dbus".
+#if !defined(NO_DBUS_USAGE)
 #include "OMXControl.h"
+#endif
 #include "DllOMX.h"
 #include "Srt.h"
 #include "KeyConfig.h"
@@ -96,7 +104,10 @@ bool              m_Pause               = false;
 OMXReader         m_omx_reader;
 int               m_audio_index_use     = 0;
 OMXClock          *m_av_clock           = NULL;
+#if !defined(NO_DBUS_USAGE)
+bool              m_dbus                = true;
 OMXControl        m_omxcontrol;
+#endif
 Keyboard          *m_keyboard           = NULL;
 OMXAudioConfig    m_config_audio;
 OMXVideoConfig    m_config_video;
@@ -569,6 +580,9 @@ int main(int argc, char *argv[])
   const int http_user_agent_opt = 0x301;
   const int lavfdopts_opt   = 0x400;
   const int avdict_opt      = 0x401;
+#if !defined(NO_DBUS_USAGE)
+  const int no_dbus_opt     = 0x402;
+#endif
 
   struct option longopts[] = {
     { "info",         no_argument,        NULL,          'i' },
@@ -631,6 +645,9 @@ int main(int argc, char *argv[])
     { "user-agent",   required_argument,  NULL,          http_user_agent_opt },
     { "lavfdopts",    required_argument,  NULL,          lavfdopts_opt },
     { "avdict",       required_argument,  NULL,          avdict_opt },
+#if !defined(NO_DBUS_USAGE)
+    { "no-dbus",      no_argument,        NULL,          no_dbus_opt },
+#endif
     { 0, 0, 0, 0 }
   };
 
@@ -908,6 +925,11 @@ int main(int argc, char *argv[])
       case ':':
         return EXIT_FAILURE;
         break;
+#if !defined(NO_DBUS_USAGE)
+      case no_dbus_opt:
+        m_dbus = false;
+        break;
+#endif
       default:
         return EXIT_FAILURE;
         break;
@@ -993,13 +1015,17 @@ int main(int argc, char *argv[])
     printf("Only %dM of gpu_mem is configured. Try running \"sudo raspi-config\" and ensure that \"memory_split\" has a value of %d or greater\n", gpu_mem, min_gpu_mem);
 
   m_av_clock = new OMXClock();
-  int control_err = m_omxcontrol.init(
-    m_av_clock,
-    &m_player_audio,
-    &m_player_subtitles,
-    &m_omx_reader,
-    m_dbus_name
-  );
+#if !defined(NO_DBUS_USAGE)
+  if(m_dbus)
+  {
+    /*int control_err =*/ m_omxcontrol.init(
+		m_av_clock,
+		&m_player_audio,
+		&m_player_subtitles,
+		&m_omx_reader,
+		m_dbus_name );
+  } 
+#endif
   if (false == m_no_keys)
   {
     m_keyboard = new Keyboard();
@@ -1007,7 +1033,6 @@ int main(int argc, char *argv[])
   if (NULL != m_keyboard)
   {
     m_keyboard->setKeymap(keymap);
-    m_keyboard->setDbusName(m_dbus_name);
   }
 
   if(!m_omx_reader.Open(m_filename.c_str(), m_dump_format, m_config_audio.is_live, m_timeout, m_cookie.c_str(), m_user_agent.c_str(), m_lavfdopts.c_str(), m_avdict.c_str()))
@@ -1174,12 +1199,25 @@ int main(int argc, char *argv[])
     }
 
      if (update) {
-       OMXControlResult result = control_err
-                               ? (OMXControlResult)m_keyboard->getEvent()
-                               : m_omxcontrol.getEvent();
-       double oldPos, newPos;
+       int key;
+       key = m_keyboard->getEvent();
+//TODO getArg
+//TODO getWinArg
+#if !defined(NO_DBUS_USAGE)
+       OMXControlResult result(0);
+       if(m_dbus)
+       {
+         // No action from keyboard...
+         if(key <= 0)
+         {
+           // ...maybe an action from DBus?
+           result = m_omxcontrol.getEvent();
+           key = result.getKey();
+         }
+       }
+#endif
 
-    switch(result.getKey())
+    switch(key)
     {
       case KeyConfig::ACTION_SHOW_INFO:
         m_tv_show_info = !m_tv_show_info;
@@ -1403,17 +1441,21 @@ int main(int argc, char *argv[])
       case KeyConfig::ACTION_SEEK_BACK_LARGE:
         if(m_omx_reader.CanSeek()) m_incr = -600.0;
         break;
+#if !defined(NO_DBUS_USAGE)
       case KeyConfig::ACTION_SEEK_RELATIVE:
           m_incr = result.getArg() * 1e-6;
           break;
       case KeyConfig::ACTION_SEEK_ABSOLUTE:
-          newPos = result.getArg() * 1e-6;
-          oldPos = m_av_clock->OMXMediaTime()*1e-6;
+          {
+          double newPos = result.getArg() * 1e-6;
+          double oldPos = m_av_clock->OMXMediaTime()*1e-6;
           m_incr = newPos - oldPos;
+          }
           break;
       case KeyConfig::ACTION_SET_ALPHA:
           m_player_video.SetAlpha(result.getArg());
           break;
+#endif
       case KeyConfig::ACTION_PAUSE:
         m_Pause = !m_Pause;
         if (m_av_clock->OMXPlaySpeed() != DVD_PLAYSPEED_NORMAL && m_av_clock->OMXPlaySpeed() != DVD_PLAYSPEED_PAUSE)
@@ -1444,6 +1486,7 @@ int main(int argc, char *argv[])
             (t/3600), (t/60)%60, t%60, (dur/3600), (dur/60)%60, dur%60));
         }
         break;
+#if !defined(NO_DBUS_USAGE)
       case KeyConfig::ACTION_MOVE_VIDEO:
         sscanf(result.getWinArg(), "%f %f %f %f", &m_config_video.dst_rect.x1, &m_config_video.dst_rect.y1, &m_config_video.dst_rect.x2, &m_config_video.dst_rect.y2);
         m_player_video.SetVideoRect(m_config_video.src_rect, m_config_video.dst_rect);
@@ -1473,6 +1516,7 @@ int main(int argc, char *argv[])
           m_player_video.SetVideoRect(m_config_video.aspectMode);
         }
         break;
+#endif
       case KeyConfig::ACTION_DECREASE_VOLUME:
         m_Volume -= 300;
         m_player_audio.SetVolume(pow(10, m_Volume / 2000.0));
