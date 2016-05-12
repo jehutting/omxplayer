@@ -1200,7 +1200,7 @@ int main(int argc, char *argv[])
 
      if (update) {
        int key;
-       key = m_keyboard->getEvent();
+       key = m_keyboard ? m_keyboard->getEvent() : 0;
 //TODO getArg
 //TODO getWinArg
 #if !defined(NO_DBUS_USAGE)
