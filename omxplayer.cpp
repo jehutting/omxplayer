@@ -464,7 +464,8 @@ static int get_mem_gpu(void)
 
 static void blank_background(uint32_t rgba)
 {
-  if (!rgba)
+  // if alpha is fully transparent then background has no effect
+  if (!(rgba & 0xff000000))
     return;
   // we create a 1x1 black pixel image that is added to display just behind video
   DISPMANX_DISPLAY_HANDLE_T   display;
@@ -474,7 +475,6 @@ static void blank_background(uint32_t rgba)
   int             ret;
   uint32_t vc_image_ptr;
   VC_IMAGE_TYPE_T type = VC_IMAGE_ARGB8888;
-  uint16_t image = 0x0000; // black
   int             layer = m_config_video.layer - 1;
 
   VC_RECT_T dst_rect, src_rect;
@@ -1456,7 +1456,21 @@ int main(int argc, char *argv[])
           m_player_video.SetAlpha(result.getArg());
           break;
 #endif
+      case KeyConfig::ACTION_PLAY:
+        m_Pause=false;
+        if(m_has_subtitle)
+        {
+          m_player_subtitles.Resume();
+        }
+        break;
       case KeyConfig::ACTION_PAUSE:
+        m_Pause=true;
+        if(m_has_subtitle)
+        {
+          m_player_subtitles.Pause();
+        }
+        break;
+      case KeyConfig::ACTION_PLAYPAUSE:
         m_Pause = !m_Pause;
         if (m_av_clock->OMXPlaySpeed() != DVD_PLAYSPEED_NORMAL && m_av_clock->OMXPlaySpeed() != DVD_PLAYSPEED_PAUSE)
         {
