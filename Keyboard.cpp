@@ -37,7 +37,6 @@ Keyboard::Keyboard()
 
 Keyboard::~Keyboard() 
 {
-  Close();
 }
 
 void Keyboard::Close()
@@ -73,7 +72,8 @@ int Keyboard::getEvent()
     return m_keymap[ch[0]];
   }
 
-  return -1;
+  // no key
+  return KeyConfig::ACTION_BLANK;
 }
 
 void Keyboard::setKeymap(std::map<int,int> keymap) 

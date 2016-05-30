@@ -52,10 +52,12 @@ extern "C" {
 #include "OMXPlayerVideo.h"
 #include "OMXPlayerAudio.h"
 #include "OMXPlayerSubtitles.h"
-// Use the NO_DBUS_USAGE compiler directive if you DON'T WANT to have an
-// omxplayer able to use the D-BUS AT ALL. Add a line "CFLAGS+=-DNO_DBUS_USAGE" 
-// to your Makefile to do so.
-// If you (have an omxplayer build WITH the D-Bus interface BUT) OCCASIONALLY 
+// If you DON'T WANT to have an omxplayer able to use the D-BUS interface AT ALL,
+// then make the following modifications in the Makefile
+// - add a line "CFLAGS+=-DNO_DBUS_USAGE"
+// - remove OMXControl.cpp from the SRC list
+// - remove library "-ldbus-1" from the (omxplayer.bin) link command.
+// If you (have an omxplayer built WITH the D-Bus interface BUT) OCCASIONALLY 
 // want to run without (omxplayer being controlled through) the D-Bus interface
 // (OMXControl) use omxplayer option "--no-dbus".
 #if !defined(NO_DBUS_USAGE)
@@ -105,7 +107,7 @@ OMXReader         m_omx_reader;
 int               m_audio_index_use     = 0;
 OMXClock          *m_av_clock           = NULL;
 #if !defined(NO_DBUS_USAGE)
-bool              m_dbus                = true;
+bool              m_no_dbus             = false; // No control through the D-Bus interface
 OMXControl        m_omxcontrol;
 #endif
 Keyboard          *m_keyboard           = NULL;
@@ -142,6 +144,7 @@ void sig_handler(int s)
   if (NULL != m_keyboard)
   {
      m_keyboard->Close();
+     delete m_keyboard;
   }
   abort();
 }
@@ -927,7 +930,7 @@ int main(int argc, char *argv[])
         break;
 #if !defined(NO_DBUS_USAGE)
       case no_dbus_opt:
-        m_dbus = false;
+        m_no_dbus = true;
         break;
 #endif
       default:
@@ -1016,23 +1019,16 @@ int main(int argc, char *argv[])
 
   m_av_clock = new OMXClock();
 #if !defined(NO_DBUS_USAGE)
-  if(m_dbus)
+  if(!m_no_dbus)
   {
-    /*int control_err =*/ m_omxcontrol.init(
-		m_av_clock,
-		&m_player_audio,
-		&m_player_subtitles,
-		&m_omx_reader,
-		m_dbus_name );
+    m_omxcontrol.init(m_av_clock,	&m_player_audio, &m_player_subtitles, &m_omx_reader, m_dbus_name );
   } 
 #endif
-  if (false == m_no_keys)
+  if(!m_no_keys)
   {
     m_keyboard = new Keyboard();
-  }
-  if (NULL != m_keyboard)
-  {
-    m_keyboard->setKeymap(keymap);
+    if(m_keyboard)
+      m_keyboard->setKeymap(keymap);
   }
 
   if(!m_omx_reader.Open(m_filename.c_str(), m_dump_format, m_config_audio.is_live, m_timeout, m_cookie.c_str(), m_user_agent.c_str(), m_lavfdopts.c_str(), m_avdict.c_str()))
@@ -1199,25 +1195,35 @@ int main(int argc, char *argv[])
     }
 
      if (update) {
-       int key;
-       key = m_keyboard ? m_keyboard->getEvent() : 0;
-//TODO getArg
-//TODO getWinArg
+       int action_key;
+       int64_t action_int_argument;
+       const char *action_str_argument;
+
+       // Keyboard
+       action_key = m_keyboard ? m_keyboard->getEvent() : KeyConfig::ACTION_BLANK;
+       action_int_argument = 0;
+       action_str_argument = "";
+
+       // D-Bus interface
 #if !defined(NO_DBUS_USAGE)
-       OMXControlResult result(0);
-       if(m_dbus)
+       if(!m_no_dbus)
        {
          // No action from keyboard...
-         if(key <= 0)
+         if(action_key == KeyConfig::ACTION_BLANK)
          {
            // ...maybe an action from DBus?
-           result = m_omxcontrol.getEvent();
-           key = result.getKey();
+           OMXControlResult result = m_omxcontrol.getEvent();
+           action_key = result.getKey();
+           if(action_key != KeyConfig::ACTION_BLANK)
+           {
+             action_int_argument = result.getArg();
+             action_str_argument = result.getWinArg();
+           }
          }
        }
 #endif
 
-    switch(key)
+    switch(action_key)
     {
       case KeyConfig::ACTION_SHOW_INFO:
         m_tv_show_info = !m_tv_show_info;
@@ -1443,17 +1449,17 @@ int main(int argc, char *argv[])
         break;
 #if !defined(NO_DBUS_USAGE)
       case KeyConfig::ACTION_SEEK_RELATIVE:
-          m_incr = result.getArg() * 1e-6;
+          m_incr = action_int_argument * 1e-6;
           break;
       case KeyConfig::ACTION_SEEK_ABSOLUTE:
           {
-          double newPos = result.getArg() * 1e-6;
+          double newPos = action_int_argument * 1e-6;
           double oldPos = m_av_clock->OMXMediaTime()*1e-6;
           m_incr = newPos - oldPos;
           }
           break;
       case KeyConfig::ACTION_SET_ALPHA:
-          m_player_video.SetAlpha(result.getArg());
+          m_player_video.SetAlpha(action_int_argument);
           break;
 #endif
       case KeyConfig::ACTION_PLAY:
@@ -1502,11 +1508,11 @@ int main(int argc, char *argv[])
         break;
 #if !defined(NO_DBUS_USAGE)
       case KeyConfig::ACTION_MOVE_VIDEO:
-        sscanf(result.getWinArg(), "%f %f %f %f", &m_config_video.dst_rect.x1, &m_config_video.dst_rect.y1, &m_config_video.dst_rect.x2, &m_config_video.dst_rect.y2);
+        sscanf(action_str_argument, "%f %f %f %f", &m_config_video.dst_rect.x1, &m_config_video.dst_rect.y1, &m_config_video.dst_rect.x2, &m_config_video.dst_rect.y2);
         m_player_video.SetVideoRect(m_config_video.src_rect, m_config_video.dst_rect);
         break;
       case KeyConfig::ACTION_CROP_VIDEO:
-        sscanf(result.getWinArg(), "%f %f %f %f", &m_config_video.src_rect.x1, &m_config_video.src_rect.y1, &m_config_video.src_rect.x2, &m_config_video.src_rect.y2);
+        sscanf(action_str_argument, "%f %f %f %f", &m_config_video.src_rect.x1, &m_config_video.src_rect.y1, &m_config_video.src_rect.x2, &m_config_video.src_rect.y2);
         m_player_video.SetVideoRect(m_config_video.src_rect, m_config_video.dst_rect);
         break;
       case KeyConfig::ACTION_HIDE_VIDEO:
@@ -1518,12 +1524,12 @@ int main(int argc, char *argv[])
         m_player_video.SetAlpha(255);
         break;
       case KeyConfig::ACTION_SET_ASPECT_MODE:
-        if (result.getWinArg()) {
-          if (!strcasecmp(result.getWinArg(), "letterbox"))
+        if (action_str_argument) {
+          if (!strcasecmp(action_str_argument, "letterbox"))
             m_config_video.aspectMode = 1;
-          else if (!strcasecmp(result.getWinArg(), "fill"))
+          else if (!strcasecmp(action_str_argument, "fill"))
             m_config_video.aspectMode = 2;
-          else if (!strcasecmp(result.getWinArg(), "stretch"))
+          else if (!strcasecmp(action_str_argument, "stretch"))
             m_config_video.aspectMode = 3;
           else
             m_config_video.aspectMode = 0;
@@ -1873,6 +1879,7 @@ do_exit:
   if (NULL != m_keyboard)
   {
     m_keyboard->Close();
+    delete m_keyboard;
   }
 
   if(m_omx_pkt)
