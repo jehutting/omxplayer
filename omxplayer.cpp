@@ -453,7 +453,8 @@ static int get_mem_gpu(void)
 
 static void blank_background(uint32_t rgba)
 {
-  if (!rgba)
+  // if alpha is fully transparent then background has no effect
+  if (!(rgba & 0xff000000))
     return;
   // we create a 1x1 black pixel image that is added to display just behind video
   DISPMANX_DISPLAY_HANDLE_T   display;
@@ -463,7 +464,6 @@ static void blank_background(uint32_t rgba)
   int             ret;
   uint32_t vc_image_ptr;
   VC_IMAGE_TYPE_T type = VC_IMAGE_ARGB8888;
-  uint16_t image = 0x0000; // black
   int             layer = m_config_video.layer - 1;
 
   VC_RECT_T dst_rect, src_rect;
@@ -586,7 +586,7 @@ int main(int argc, char *argv[])
     { "nodeinterlace",no_argument,        NULL,          no_deinterlace_opt },
     { "nativedeinterlace",no_argument,    NULL,          native_deinterlace_opt },
     { "anaglyph",     required_argument,  NULL,          anaglyph_opt },
-    { "advanced",     no_argument,        NULL,          advanced_opt },
+    { "advanced",     optional_argument,  NULL,          advanced_opt },
     { "hw",           no_argument,        NULL,          'w' },
     { "3d",           required_argument,  NULL,          '3' },
     { "allow-mvc",    no_argument,        NULL,          'M' },
@@ -694,7 +694,7 @@ int main(int argc, char *argv[])
         m_config_video.anaglyph = (OMX_IMAGEFILTERANAGLYPHTYPE)atoi(optarg);
         break;
       case advanced_opt:
-        m_config_video.advanced_hd_deinterlace = true;
+        m_config_video.advanced_hd_deinterlace = optarg ? (atoi(optarg) ? true : false): true;
         break;
       case 'w':
         m_config_audio.hwdecode = true;
@@ -706,10 +706,24 @@ int main(int argc, char *argv[])
         m_stats = true;
         break;
       case 'o':
-        m_config_audio.device = optarg;
-        if(m_config_audio.device != "local" && m_config_audio.device != "hdmi" && m_config_audio.device != "both")
         {
-          printf("Bad argument for -%c: Output device must be `local', `hdmi' or `both'\n", c);
+          CStdString str = optarg;
+          int colon = str.Find(':');
+          if(colon >= 0)
+          {
+            m_config_audio.device = str.Mid(0, colon);
+            m_config_audio.subdevice = str.Mid(colon + 1, str.GetLength() - colon);
+          }
+          else
+          {
+            m_config_audio.device = str;
+            m_config_audio.subdevice = "";
+          }
+        }
+        if(m_config_audio.device != "local" && m_config_audio.device != "hdmi" && m_config_audio.device != "both" &&
+           m_config_audio.device != "alsa")
+        {
+          printf("Bad argument for -%c: Output device must be `local', `hdmi', `both' or `alsa'\n", c);
           return EXIT_FAILURE;
         }
         m_config_audio.device = "omx:" + m_config_audio.device;
@@ -1134,6 +1148,9 @@ int main(int argc, char *argv[])
       m_config_audio.device = "omx:local";
   }
 
+  if(m_config_audio.device == "omx:alsa" && m_config_audio.subdevice.empty())
+    m_config_audio.subdevice = "default";
+
   if ((m_config_audio.hints.codec == AV_CODEC_ID_AC3 || m_config_audio.hints.codec == AV_CODEC_ID_EAC3) &&
       m_BcmHost.vc_tv_hdmi_audio_supported(EDID_AudioFormat_eAC3, 2, EDID_AudioSampleRate_e44KHz, EDID_AudioSampleSize_16bit ) != 0)
     m_config_audio.passthrough = false;
@@ -1175,7 +1192,7 @@ int main(int argc, char *argv[])
 
      if (update) {
        OMXControlResult result = control_err
-                               ? (OMXControlResult)m_keyboard->getEvent()
+                               ? (OMXControlResult)(m_keyboard ? m_keyboard->getEvent() : KeyConfig::ACTION_BLANK)
                                : m_omxcontrol.getEvent();
        double oldPos, newPos;
 
@@ -1414,7 +1431,21 @@ int main(int argc, char *argv[])
       case KeyConfig::ACTION_SET_ALPHA:
           m_player_video.SetAlpha(result.getArg());
           break;
+      case KeyConfig::ACTION_PLAY:
+        m_Pause=false;
+        if(m_has_subtitle)
+        {
+          m_player_subtitles.Resume();
+        }
+        break;
       case KeyConfig::ACTION_PAUSE:
+        m_Pause=true;
+        if(m_has_subtitle)
+        {
+          m_player_subtitles.Pause();
+        }
+        break;
+      case KeyConfig::ACTION_PLAYPAUSE:
         m_Pause = !m_Pause;
         if (m_av_clock->OMXPlaySpeed() != DVD_PLAYSPEED_NORMAL && m_av_clock->OMXPlaySpeed() != DVD_PLAYSPEED_PAUSE)
         {
