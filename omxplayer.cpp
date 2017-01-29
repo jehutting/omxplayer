@@ -1120,6 +1120,7 @@ int main(int argc, char *argv[])
                                 m_config_video.display, m_config_video.layer + 1,
                                 m_av_clock))
       goto do_exit;
+    if(m_config_video.dst_rect.x2 > 0 && m_config_video.dst_rect.y2 > 0)
       m_player_subtitles.SetSubtitleRect(m_config_video.dst_rect.x1, m_config_video.dst_rect.y1, m_config_video.dst_rect.x2, m_config_video.dst_rect.y2);
   }
 
@@ -1197,7 +1198,8 @@ int main(int argc, char *argv[])
                                : m_omxcontrol.getEvent();
        double oldPos, newPos;
 
-    switch(result.getKey())
+    auto action = result.getKey(); 
+    switch(action)
     {
       case KeyConfig::ACTION_SHOW_INFO:
         m_tv_show_info = !m_tv_show_info;
@@ -1287,32 +1289,25 @@ int main(int argc, char *argv[])
             strprintf("Audio stream: %d", m_omx_reader.GetAudioIndex() + 1));
         }
         break;
+
       case KeyConfig::ACTION_PREVIOUS_CHAPTER:
-        if(m_omx_reader.GetChapterCount() > 0)
-        {
-          m_omx_reader.SeekChapter(m_omx_reader.GetChapter() - 1, &startpts);
-          DISPLAY_TEXT_LONG(strprintf("Chapter %d", m_omx_reader.GetChapter()));
-          FlushStreams(startpts);
-          m_seek_flush = true;
-          m_chapter_seek = true;
-        }
-        else
-        {
-          m_incr = -600.0;
-        }
-        break;
       case KeyConfig::ACTION_NEXT_CHAPTER:
         if(m_omx_reader.GetChapterCount() > 0)
         {
-          m_omx_reader.SeekChapter(m_omx_reader.GetChapter() + 1, &startpts);
-          DISPLAY_TEXT_LONG(strprintf("Chapter %d", m_omx_reader.GetChapter()));
-          FlushStreams(startpts);
-          m_seek_flush = true;
-          m_chapter_seek = true;
+          int chapter = m_omx_reader.SeekToChapter(m_av_clock->OMXMediaTime(), /*relative=*/true,
+                             (action == KeyConfig::ACTION_PREVIOUS_CHAPTER) ? -1 : +1);
+          if(chapter != -1)
+          {
+            const string *chapterName = m_omx_reader.GetChapterName(chapter);
+            DISPLAY_TEXT_LONG(strprintf("%s", chapterName->c_str()));
+            FlushStreams(DVD_NOPTS_VALUE);
+            m_seek_flush = true;
+            m_chapter_seek = true;
+          }
         }
         else
         {
-          m_incr = 600.0;
+           m_incr = (action == KeyConfig::ACTION_PREVIOUS_CHAPTER) ? -600.0 : 600.0;
         }
         break;
       case KeyConfig::ACTION_PREVIOUS_SUBTITLE:
@@ -1576,6 +1571,7 @@ int main(int argc, char *argv[])
         m_player_subtitles.Resume();
       m_packet_after_seek = false;
       m_seek_flush = false;
+      m_chapter_seek = false;
       m_incr = 0;
     }
     else if(m_packet_after_seek && TRICKPLAY(m_av_clock->OMXPlaySpeed()))

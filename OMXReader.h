@@ -53,8 +53,8 @@ using namespace std;
 typedef struct OMXChapter
 {
   std::string name;
-  int64_t     seekto_ms;
-  double      ts;
+  double start; // pts
+  double end;
 } OMXChapter;
 
 class OMXReader;
@@ -153,23 +153,25 @@ public:
   int  VideoStreamCount() { return m_video_count; };
   int  SubtitleStreamCount() { return m_subtitle_count; };
   bool SetActiveStream(OMXStreamType type, unsigned int index);
-  int  GetChapterCount() { return m_chapter_count; };
   double GetAspectRatio() { return m_aspect; };
   int GetWidth() { return m_width; };
   int GetHeight() { return m_height; };
-  OMXChapter GetChapter(unsigned int chapter) { return m_chapters[(chapter > MAX_OMX_CHAPTERS) ? MAX_OMX_CHAPTERS : chapter]; };
   static void FreePacket(OMXPacket *pkt);
   static OMXPacket *AllocPacket(int size);
   void SetSpeed(int iSpeed);
   void UpdateCurrentPTS();
   double ConvertTimestamp(int64_t pts, int den, int num);
-  int GetChapter();
-  void GetChapterName(std::string& strChapterName);
-  bool SeekChapter(int chapter, double* startpts);
   int GetAudioIndex() { return (m_audio_index >= 0) ? m_streams[m_audio_index].index : -1; };
   int GetSubtitleIndex() { return (m_subtitle_index >= 0) ? m_streams[m_subtitle_index].index : -1; };
   int GetVideoIndex() { return (m_video_index >= 0) ? m_streams[m_video_index].index : -1; };
   std::string getFilename() const { return m_filename; }
+
+  // Note: chapter (index) is zero-based!
+  int GetChapterCount() { return m_chapter_count; };
+  const std::string* GetChapterName(int chapter);
+  int GetChapter(double mediatime);
+  double GetChapterStart(int chapter);
+  int SeekToChapter(double media_time, bool relative, int index);
 
   int GetRelativeIndex(size_t index)
   {

@@ -339,6 +339,7 @@ void OMXReader::ClearStreams()
   m_audio_count     = 0;
   m_video_count     = 0;
   m_subtitle_count  = 0;
+  m_chapter_count   = 0;
 
   for(int i = 0; i < MAX_STREAMS; i++)
   {
@@ -400,6 +401,7 @@ bool OMXReader::Close()
   m_video_count     = 0;
   m_audio_count     = 0;
   m_subtitle_count  = 0;
+  m_chapter_count   = 0;
   m_audio_index     = -1;
   m_video_index     = -1;
   m_subtitle_index  = -1;
@@ -670,42 +672,37 @@ bool OMXReader::GetStreams()
   if(m_subtitle_count)
     SetActiveStreamInternal(OMXSTREAM_SUBTITLE, 0);
 
-  int i = 0;
-  for(i = 0; i < MAX_OMX_CHAPTERS; i++)
-  {
-    m_chapters[i].name      = "";
-    m_chapters[i].seekto_ms = 0;
-    m_chapters[i].ts        = 0;
-  }
-
+  // Get the chapters
   m_chapter_count = 0;
-
   if(m_video_index != -1)
   {
-    //m_current_chapter = 0;
 #if LIBAVFORMAT_VERSION_INT >= AV_VERSION_INT(52,14,0)
-    m_chapter_count = (m_pFormatContext->nb_chapters > MAX_OMX_CHAPTERS) ? MAX_OMX_CHAPTERS : m_pFormatContext->nb_chapters;
-    for(i = 0; i < m_chapter_count; i++)
+    unsigned int i_max = std::min(m_pFormatContext->nb_chapters, (unsigned int)MAX_OMX_CHAPTERS);
+    for(unsigned int i = 0; i < i_max; i++)
     {
-      if(i > MAX_OMX_CHAPTERS)
-        break;
-
       AVChapter *chapter = m_pFormatContext->chapters[i];
       if(!chapter)
         continue;
 
-      m_chapters[i].seekto_ms = ConvertTimestamp(chapter->start, chapter->time_base.den, chapter->time_base.num) / 1000;
-      m_chapters[i].ts        = m_chapters[i].seekto_ms / 1000;
+      m_chapter_count++;
 
+      // start time of the first frame of the chapter in presentation order is in time_base units
+      // convert to STREAM time base units
+      m_chapters[i].start = ConvertTimestamp(chapter->start, chapter->time_base.den, chapter->time_base.num);
+      m_chapters[i].end = ConvertTimestamp(chapter->end, chapter->time_base.den, chapter->time_base.num);
+ 
 #if LIBAVFORMAT_VERSION_INT >= AV_VERSION_INT(52,83,0)
-      AVDictionaryEntry *titleTag = m_dllAvUtil.av_dict_get(m_pFormatContext->chapters[i]->metadata,"title", NULL, 0);
-      if (titleTag)
+      AVDictionaryEntry *titleTag = m_dllAvUtil.av_dict_get(m_pFormatContext->chapters[i]->metadata, "title", NULL, 0);
+      if(titleTag)
         m_chapters[i].name = titleTag->value;
 #else
       if(m_pFormatContext->chapters[i]->title)
         m_chapters[i].name = m_pFormatContext->chapters[i]->title;
 #endif
-      printf("Chapter : \t%d \t%s \t%8.2f\n", i, m_chapters[i].name.c_str(), m_chapters[i].ts);
+      else
+        m_chapters[i].name = "";
+
+      printf("Chapter : \t%d \t%s \t%8.2f\n", i, m_chapters[i].name.c_str(), m_chapters[i].start / AV_TIME_BASE);
     }
   }
 #endif
@@ -1053,26 +1050,6 @@ bool OMXReader::SetActiveStream(OMXStreamType type, unsigned int index)
   return ret;
 }
 
-bool OMXReader::SeekChapter(int chapter, double* startpts)
-{
-  if(chapter < 1)
-    chapter = 1;
-
-  if(m_pFormatContext == NULL)
-    return false;
-
-#if LIBAVFORMAT_VERSION_INT >= AV_VERSION_INT(52,14,0)
-  if(chapter < 1 || chapter > (int)m_pFormatContext->nb_chapters)
-    return false;
-
-  AVChapter *ch = m_pFormatContext->chapters[chapter-1];
-  double dts = ConvertTimestamp(ch->start, ch->time_base.den, ch->time_base.num);
-  return SeekTime(DVD_TIME_TO_MSEC(dts), 0, startpts);
-#else
-  return false;
-#endif
-}
-
 double OMXReader::ConvertTimestamp(int64_t pts, int den, int num)
 {
   if(m_pFormatContext == NULL)
@@ -1097,44 +1074,64 @@ double OMXReader::ConvertTimestamp(int64_t pts, int den, int num)
   return timestamp*DVD_TIME_BASE;
 }
 
-int OMXReader::GetChapter()
+int OMXReader::GetChapter(double mediatime)
 {
-  if(m_pFormatContext == NULL
-  || m_iCurrentPts == DVD_NOPTS_VALUE)
-    return 0;
-
-#if LIBAVFORMAT_VERSION_INT >= AV_VERSION_INT(52,14,0)
-  for(unsigned i = 0; i < m_pFormatContext->nb_chapters; i++)
+  for(int i = 0; i < m_chapter_count; i++)
   {
-    AVChapter *chapter = m_pFormatContext->chapters[i];
-    if(m_iCurrentPts >= ConvertTimestamp(chapter->start, chapter->time_base.den, chapter->time_base.num)
-      && m_iCurrentPts <  ConvertTimestamp(chapter->end,   chapter->time_base.den, chapter->time_base.num))
-      return i + 1;
+    if(mediatime >= m_chapters[i].start && mediatime <= m_chapters[i].end)
+      return i;
   }
-#endif
-  return 0;
+
+  // not found
+  return -1;
 }
 
-void OMXReader::GetChapterName(std::string& strChapterName)
+const std::string* OMXReader::GetChapterName(int chapter)
 {
-  strChapterName = "";
-#if LIBAVFORMAT_VERSION_INT >= AV_VERSION_INT(52,14,0)
-  int chapterIdx = GetChapter();
-  if(chapterIdx <= 0)
-    return;
-#if LIBAVFORMAT_VERSION_INT >= AV_VERSION_INT(52,83,0)
-  // API added on: 2010-10-15
-  // (Note that while the function was available earlier, the generic
-  // metadata tags were not populated by default)
-  AVDictionaryEntry *titleTag = m_dllAvUtil.av_dict_get(m_pFormatContext->chapters[chapterIdx-1]->metadata,
-                                                              "title", NULL, 0);
-  if (titleTag)
-    strChapterName = titleTag->value;
-#else
-  if (m_pFormatContext->chapters[chapterIdx-1]->title)
-    strChapterName = m_pFormatContext->chapters[chapterIdx-1]->title;
-#endif
-#endif
+  if(chapter >= 0 && chapter < m_chapter_count)
+    return &m_chapters[chapter].name;
+  else
+    return NULL;
+}
+
+double OMXReader::GetChapterStart(int chapter)
+{
+  if(chapter >= 0 && chapter < m_chapter_count)
+    return m_chapters[chapter].start;
+  else
+    return 0;
+}
+
+int OMXReader::SeekToChapter(double media_time, bool relative, int index)
+{
+  int res = -1; //not OK
+
+  if(GetChapterCount() <= 0)
+    return res;
+
+  int chapter;
+  if(relative)
+  {
+    // use current time to determine the current chapter
+    chapter = GetChapter(media_time);
+    if(chapter != -1)
+      chapter += index;
+  }
+  else // absolute
+  {
+    chapter = index;
+  }
+
+  if(chapter >= 0 && chapter < GetChapterCount())
+  {
+    double pts = GetChapterStart(chapter) / 1000;
+    double dummy;
+    SeekTime(pts, 0, &dummy);
+
+    res = chapter;
+  }
+
+  return res;
 }
 
 void OMXReader::UpdateCurrentPTS()
